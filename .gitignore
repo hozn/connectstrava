@@ -1,0 +1,7 @@
+env
+*.pyc
+development.ini
+*.db
+.*
+*.tcx
+*.egg-info
