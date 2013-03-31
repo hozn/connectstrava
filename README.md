@@ -63,8 +63,8 @@ For example http://connect.garmin.com/activity/12345
 
 (These instructions assume you have the virtualenv setup, per instructions above and a valid configuration.)
 
-  shell$ cd /path/to/connectstrava
-  shell$ env/bin/connect-init-db -c settings.cfg --last-ride=12345
+	shell$ cd /path/to/connectstrava
+	shell$ env/bin/connect-init-db -c settings.cfg --last-ride=12345
 
 ## Sync Rides
 
@@ -72,6 +72,9 @@ Once the database is initialized you can sync rides.  Essentially the script wil
 stored "last ride" id.  This will only work for a maximum of 20 unsync'd rides (the script does not currently support
 paging through the Garmin Connect activity pages).
 
-  shell$ cd /path/to/connectstrava
-  shell$ connect-sync-rides -c settings.cfg
+	shell$ cd /path/to/connectstrava
+	shell$ connect-sync-rides -c settings.cfg
 
+Info-level logs will indicate which rides have been uploaded/synchronized.  The script is designed to produce no 
+output when there are no rides to sync.  (Edit config to turn logging to DEBUG if you want to see logs in this 
+case.)
