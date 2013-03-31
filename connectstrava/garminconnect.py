@@ -50,6 +50,15 @@ class ConnectClient(object):
         #print r.content
         
         self.cookies = r.cookies
+    
+    def get_activity(self, activity_id):
+        """
+        Gets the JSON for a single activity.
+        """
+        r = self.rsession.get('http://connect.garmin.com/proxy/activity-service-1.1/json/activity/{0}'.format(activity_id),
+                              cookies=self.cookies)
+        results = r.json()
+        return results['activity']
         
     def get_activities(self, **kwargs):
         """

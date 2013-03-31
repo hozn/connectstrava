@@ -1,15 +1,16 @@
 import sys
+import time
 import logging
+import logging.config
 import optparse
 import shelve
 from contextlib import closing
+from io import BytesIO
 
 from stravalib.protocol.scrape import WebsiteClient
 
 from connectstrava.config import config, init_config
 from connectstrava.garminconnect import ConnectClient
-
-logging.basicConfig(level=logging.INFO, format='%(levelname)-8s %(message)s')
 
 def _setup_parser_common(parser):
     parser.add_option('-c', '--config-file', dest='config_file', metavar='FILE', help='Path to the config file.')
@@ -30,6 +31,8 @@ def sync_rides():
         sys.exit(2)
     
     init_config(options.config_file)
+    
+    logging.config.fileConfig(options.config_file)
     
     if options.database:
         config.set('main', 'database_path', options.database)
@@ -66,23 +69,68 @@ def sync_rides():
             else:
                 candidates.append(a['activity'])
         
-        logging.info("Found {0} activities that need to be sync'd.".format(len(candidates)))
-        
         if candidates:
             
+            logging.info("Found {0} activities that need to be sync'd.".format(len(candidates)))
+            
+            # First reverse it so we start with the oldest one (this makes it easier to update the last-sync'd record
+            # along the way.
+            
+            candidates = list(reversed(candidates))
+            
+            upload_ids = []
             for c in candidates:
                 a_id = c['activityId']
-                tmp_filename = '%s.tcx' % a_id  # TODO: Replace this with io.BytesIO()
+                
+                #tmp_filename = '%s.tcx' % a_id  # TODO: Replace this with io.BytesIO()
                 tcx_data = gc_client.download_activity(a_id, fmt='tcx')
-                with open(tmp_filename, 'w') as fp:
-                    fp.write(tcx_data)
+                fp = BytesIO()
+                fp.write(tcx_data)
+                fp.seek(0)
+                
+                #with open(tmp_filename, 'w') as fp:
+                #    fp.write(tcx_data)
                 logging.info("Uploading activity {0}".format(a_id))
-                strava_client.upload(tmp_filename)
+                upload_ids.extend(strava_client.upload(fp))
+                
+                # Update our last-sync db "row"
+                db[userid] = int(a_id)
+                db.sync()
+                
+                logging.debug("Updated last activity id for user {0} to {1}".format(userid, db[userid]))
         
-            # The new last sync is actually the first one from our candidates list (since they're in newest-first order)
-            db[userid] = int(candidates[0]['activityId'])
+            logging.info("{0} rides uploaded, last sync id for user {1} set to {2}".format(len(candidates), userid, db[userid]))
+            logging.debug("Got upload ids: {0}".format(upload_ids))
             
-            logging.info("Updated last id for user {0} to {1}".format(userid, db[userid]))
+            error_statuses = []
+            success_statuses = []
+            pending_ids = set(upload_ids)
+            
+            while len(pending_ids):
+                for upload_id in list(pending_ids): # Make a copy for iteration since we modify it during iteration.
+                    status= strava_client.check_upload_status(upload_id)
+                    if status['workflow'] == 'Error':
+                        logging.error("Error uploading item: {0}".format(status))
+                        error_statuses.append(status)
+                        pending_ids.remove(upload_id)
+                    elif status.get('activity'):
+                        url = 'http://app.strava.com/activities/{0}'.format(status['activity']['id'])
+                        logging.info("Upload succeeded, acvitity URL: {0}".format(url))
+                        success_statuses.append(status)
+                        pending_ids.remove(upload_id)
+                    else:
+                        logging.debug("Upload still pending: {0}".format(status))
+                    
+                    # We don't want to flood strava
+                    time.sleep(1.0)
+                
+            if success_statuses:
+                logging.info("{0} rides processed. Visit http://app.strava.com/athlete/training/new to update ride settings.".format(len(success_statuses)))
+            else:
+                logging.warning("Processing complete, but no successfull ride uploads.")
+            
+        else:
+            logging.debug("No activities need to be sync'd.")
             
 def init_db():
     global config
@@ -91,8 +139,8 @@ def init_db():
                                    description="Set the last (most recent) sync'd ride ID from Garmin Connect.")
     
     _setup_parser_common(parser)
-    parser.add_option('--user-id', dest='userid', metavar='ID', type='int', 
-                      help='The Garmin Connect userid.')
+    #parser.add_option('--user-id', dest='userid', metavar='ID', type='int', 
+    #                  help='The Garmin Connect userid.')
     
     parser.add_option('--last-ride', dest='last_ride', metavar='ID', type='int', 
                       help='The last (most recent) ride that has been synchronized.')
@@ -110,14 +158,19 @@ def init_db():
         sys.exit(2)
     
     init_config(options.config_file)
-
+    logging.config.fileConfig(options.config_file)
+    
     if options.database:
         config.set('main', 'database_path', options.database)
     
-    userid = options.userid
-    if not userid:
-        raise RuntimeError("Must specify the Garmin Connect numeric user id with the --user-id parameter.")
+    gc_username = config.get('main', 'gc.username')
+    gc_password = config.get('main', 'gc.password')
+    gc_client = ConnectClient(gc_username, gc_password)
+    
+    activity = gc_client.get_activity(options.last_ride)
+    userid = activity['userId'].encode('latin1') # It's a unicode string in response
     
     with closing(shelve.open(config.get('main', 'database_path'), 'c')) as db:
-        db[str(userid)] = options.last_ride
+        db[userid] = options.last_ride
+        logging.info("Updated last activity id for user {0} to {1}".format(userid, db[userid]))
     
