@@ -22,7 +22,10 @@ def sync_rides():
     parser = optparse.OptionParser(usage='%prog [OPTIONS] CONFIGFILE')
     
     _setup_parser_common(parser)
-        
+    
+    parser.add_option('--timeout', dest='timeout', metavar='SECS', type='int', 
+                      help='Maximum time before bailing out.', default=30)
+    
     (options, args) = parser.parse_args()
     
     if not options.config_file:
@@ -36,6 +39,8 @@ def sync_rides():
     
     if options.database:
         config.set('main', 'database_path', options.database)
+    
+    timeout = options.timeout
     
     gc_username = config.get('main', 'gc.username')
     gc_password = config.get('main', 'gc.password')
@@ -106,6 +111,8 @@ def sync_rides():
             success_statuses = []
             pending_ids = set(upload_ids)
             
+            start_time = time.time()
+            
             while len(pending_ids):
                 for upload_id in list(pending_ids): # Make a copy for iteration since we modify it during iteration.
                     status= strava_client.check_upload_status(upload_id)
@@ -121,6 +128,9 @@ def sync_rides():
                     else:
                         logging.debug("Upload still pending: {0}".format(status))
                     
+                    if time.time() - start_time > timeout:
+                        logging.warning("Bailing out because timeout of {0} exceeded. (last status={1!r})".format(timeout, status))
+                        break
                     # We don't want to flood strava
                     time.sleep(1.0)
                 
@@ -144,7 +154,7 @@ def init_db():
     
     parser.add_option('--last-ride', dest='last_ride', metavar='ID', type='int', 
                       help='The last (most recent) ride that has been synchronized.')
-    
+        
     (options, args) = parser.parse_args()
     
     if not options.config_file:
