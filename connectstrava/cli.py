@@ -24,7 +24,7 @@ def sync_rides():
     _setup_parser_common(parser)
     
     parser.add_option('--timeout', dest='timeout', metavar='SECS', type='int', 
-                      help='Maximum time before bailing out.', default=30)
+                      help='Maximum time before bailing out.', default=60)
     
     (options, args) = parser.parse_args()
     
@@ -116,23 +116,24 @@ def sync_rides():
             while len(pending_ids):
                 for upload_id in list(pending_ids): # Make a copy for iteration since we modify it during iteration.
                     status= strava_client.check_upload_status(upload_id)
-                    if status['workflow'] == 'Error':
-                        logging.error("Error uploading item: {0}".format(status))
-                        error_statuses.append(status)
-                        pending_ids.remove(upload_id)
-                    elif status.get('activity'):
+                    if status['workflow'] == 'Analyzing':
+                        logging.debug("Upload still pending: {0}".format(status))
+                    elif status.get('activity'): # aka workflow=Uploaded
                         url = 'http://app.strava.com/activities/{0}'.format(status['activity']['id'])
                         logging.info("Upload succeeded, acvitity URL: {0}".format(url))
                         success_statuses.append(status)
                         pending_ids.remove(upload_id)
                     else:
-                        logging.debug("Upload still pending: {0}".format(status))
-                    
-                    if time.time() - start_time > timeout:
-                        logging.warning("Bailing out because timeout of {0} exceeded. (last status={1!r})".format(timeout, status))
-                        break
+                        logging.error("Unhandled workflow; treating as error: {0}".format(status))
+                        error_statuses.append(status)
+                        pending_ids.remove(upload_id)
+                        
                     # We don't want to flood strava
                     time.sleep(1.0)
+                
+                if time.time() - start_time > timeout:
+                    logging.warning("Bailing out because timeout of {0} exceeded. (last status={1!r})".format(timeout, status))
+                    break
                 
             if success_statuses:
                 logging.info("{0} rides processed. Visit http://app.strava.com/athlete/training/new to update ride settings.".format(len(success_statuses)))
